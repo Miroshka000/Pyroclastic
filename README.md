@@ -3,7 +3,7 @@
 > [!CAUTION]
 > **Only supported on Windows x64!**
 
-An alternative bootstrapper for Minecraft: Bedrock Edition on Windows.
+An alternative bootstrapper for Minecraft: Bedrock Edition (GDK).
 
 ## Features
 
@@ -47,4 +47,5 @@ An alternative bootstrapper for Minecraft: Bedrock Edition on Windows.
 
 
 3. Start MSYS2's `UCRT64` environment & run `Build.cmd`.
+
 
