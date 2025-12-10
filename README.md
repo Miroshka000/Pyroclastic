@@ -1,4 +1,4 @@
-# MCBE GDK Boostrapper
+# Pyroclastic
 
 > [!CAUTION]
 > **Only supported on Windows x64!**
