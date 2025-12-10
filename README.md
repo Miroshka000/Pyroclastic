@@ -14,7 +14,7 @@ An alternative bootstrapper for Minecraft: Bedrock Edition on Windows.
 - Bypasses the [PC Bootstrapper provided by Gaming Runtime Services.](https://learn.microsoft.com/gaming/gdk/docs/gdk-dev/pc-dev/overviews/gr-pc-bootstrapper)
 
 ## Usage
-- [Download](https://github.com/Aetopia/MCBE.GDK.Bootstrapper/releases/latest/download/gamelaunchhelper.dll) the latest release of MCBE GDK Bootstrapper.
+- [Download](https://github.com/Aetopia/Pyroclastic/releases/latest/download/gamelaunchhelper.dll) the latest release of MCBE GDK Bootstrapper.
 
 - Run the following command(s) in PowerShell to find where the game is located:
 
@@ -47,3 +47,4 @@ An alternative bootstrapper for Minecraft: Bedrock Edition on Windows.
 
 
 3. Start MSYS2's `UCRT64` environment & run `Build.cmd`.
+
