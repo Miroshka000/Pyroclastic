@@ -2,76 +2,87 @@
 #include <windows.h>
 #include <appmodel.h>
 #include <winternl.h>
-#include <tlhelp32.h>
+#include <wtsapi32.h>
 
 __declspec(dllexport) VOID GameLaunch(VOID)
 {
-    Sleep(INFINITE);
-}
+    WCHAR pfn[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
+    if (GetCurrentPackageFamilyName(&(UINT){ARRAYSIZE(pfn)}, pfn))
+        return;
 
-DWORD ThreadProc(PVOID pParameter)
-{
-    WCHAR szCurrent[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
-    if (GetCurrentPackageFamilyName(&(UINT){ARRAYSIZE(szCurrent)}, szCurrent))
-        goto _;
+    WCHAR path[MAX_PATH] = {};
+    if (GetCurrentPackagePath(&(UINT){MAX_PATH}, path) || !SetCurrentDirectoryW(path))
+        return;
 
-    WCHAR szPath[MAX_PATH] = {};
-    if (GetCurrentPackagePath(&(UINT){ARRAYSIZE(szPath)}, szPath) || !SetCurrentDirectoryW(szPath))
-        goto _;
+    HANDLE mutex = CreateMutexW(NULL, FALSE, mutex);
 
-    PROCESSENTRY32W _ = {.dwSize = sizeof _};
-    HANDLE hProcess = {}, hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (!mutex || GetLastError())
+    {
+        CloseHandle(mutex);
+        return;
+    }
 
-    if (Process32NextW(hSnapshot, &_))
-        do
-            if (CompareStringOrdinal(L"Minecraft.Windows.exe", -1, _.szExeFile, -1, TRUE) == CSTR_EQUAL)
-            {
-                hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, _.th32ProcessID);
+    DWORD count = {};
+    HANDLE process = {};
+    WTS_PROCESS_INFOW *items = {};
+
+    if (WTSEnumerateProcessesW(WTS_CURRENT_SERVER, 0, 1, &items, &count))
+    {
+        for (DWORD index = {}; index < count; index++)
+        {
+            WTS_PROCESS_INFOW item = items[index];
+
+            if (CompareStringOrdinal(L"Minecraft.Windows.exe", -1, item.pProcessName, -1, TRUE) != CSTR_EQUAL)
+                continue;
+
+            WCHAR buffer[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
+            process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, item.ProcessId);
+
+            if (!GetPackageFamilyName(process, &(UINT){ARRAYSIZE(buffer)}, buffer) &&
+                CompareStringOrdinal(pfn, -1, buffer, -1, TRUE) == CSTR_EQUAL)
                 break;
-            }
-        while (Process32NextW(hSnapshot, &_));
 
-    if (WaitForInputIdle(hProcess, INFINITE))
-    {
-        PRTL_USER_PROCESS_PARAMETERS pParameters = NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters;
-        PWSTR pCommandLine = pParameters->CommandLine.Buffer + lstrlenW(pParameters->ImagePathName.Buffer) + 2;
-
-        PROCESS_INFORMATION _ = {};
-        CreateProcessW(L"Minecraft.Windows.exe", pCommandLine, NULL, NULL, FALSE, 0, 0, NULL, &(STARTUPINFOW){}, &_);
-        WaitForInputIdle(_.hProcess, INFINITE);
-
-        CloseHandle(_.hThread);
-        CloseHandle(_.hProcess);
+            CloseHandle(process);
+        }
+        WTSFreeMemory(items);
     }
 
-    CloseHandle(hProcess);
-    CloseHandle(hSnapshot);
-
-    HWND hWnd = {};
-    while ((hWnd = FindWindowExW(NULL, hWnd, L"Bedrock", NULL)))
+    if (WaitForInputIdle(process, INFINITE))
     {
-        DWORD dwProcessId = {};
-        GetWindowThreadProcessId(hWnd, &dwProcessId);
+        PRTL_USER_PROCESS_PARAMETERS params = NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters;
+        PWSTR args = params->CommandLine.Buffer + lstrlenW(params->ImagePathName.Buffer) + 2;
 
-        WCHAR szProcess[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
-        HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+        PROCESS_INFORMATION info = {};
+        CreateProcessW(L"Minecraft.Windows.exe", args, NULL, NULL, FALSE, 0, 0, NULL, &(STARTUPINFOW){}, &info);
+        CloseHandle(info.hThread);
 
-        if (!GetPackageFamilyName(hProcess, &(UINT32){ARRAYSIZE(szProcess)}, szProcess) &&
-            CompareStringOrdinal(szCurrent, -1, szProcess, -1, TRUE) == CSTR_EQUAL)
-            SwitchToThisWindow(hWnd, TRUE);
-
-        CloseHandle(hProcess);
+        WaitForInputIdle(info.hProcess, INFINITE);
+        CloseHandle(info.hProcess);
     }
-_:
-    return TerminateProcess(GetCurrentProcess(), EXIT_SUCCESS);
+    CloseHandle(process);
+
+    HWND wnd = {};
+    while ((wnd = FindWindowExW(NULL, wnd, L"Bedrock", NULL)))
+    {
+        DWORD processId = {};
+        GetWindowThreadProcessId(wnd, &processId);
+
+        WCHAR buffer[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+
+        if (!GetPackageFamilyName(process, &(UINT){ARRAYSIZE(buffer)}, buffer) &&
+            CompareStringOrdinal(pfn, -1, buffer, -1, TRUE) == CSTR_EQUAL)
+            SwitchToThisWindow(wnd, TRUE);
+
+        CloseHandle(process);
+    }
+
+    CloseHandle(mutex);
 }
 
-BOOL DllMain(HINSTANCE hInstance, DWORD dwReason, PVOID pReserved)
+BOOL DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
-    if (dwReason == DLL_PROCESS_ATTACH)
-    {
-        DisableThreadLibraryCalls(hInstance);
-        QueueUserWorkItem(ThreadProc, NULL, WT_EXECUTEDEFAULT);
-    }
+    if (reason == DLL_PROCESS_ATTACH)
+        DisableThreadLibraryCalls(instance);
     return TRUE;
 }
