@@ -4,29 +4,55 @@
 #include <winternl.h>
 #include <wtsapi32.h>
 
+/*
+    - MinGW doesn't declare this symbol in its headers.
+    - So declare it manually for use in our dynamic link library.
+*/
+
+BOOL WTSEnumerateProcessesExW(HANDLE hServer, DWORD *pLevel, DWORD SessionId, LPWSTR *ppProcessInfo, DWORD *pCount);
+
+/*
+    - This symbol is exported and called by Game Launch Helper to launch the game.
+    - We don't know about the symbol declaration so leave it as a stub.
+*/
+
 __declspec(dllexport) VOID GameLaunch(VOID)
+{
+    Sleep(INFINITE);
+}
+
+/*
+    - To retain compatibility, emulate the PC Bootstrapper.
+    - We utilize enumeration to avoid "marking" anything.
+*/
+
+DWORD ThreadProc(PVOID parameter)
 {
     WCHAR pfn[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
     if (GetCurrentPackageFamilyName(&(UINT){ARRAYSIZE(pfn)}, pfn))
-        return;
+        goto _;
 
     WCHAR path[MAX_PATH] = {};
     if (GetCurrentPackagePath(&(UINT){MAX_PATH}, path) || !SetCurrentDirectoryW(path))
-        return;
+        goto _;
 
     HANDLE mutex = CreateMutexW(NULL, FALSE, mutex);
-
     if (!mutex || GetLastError())
     {
         CloseHandle(mutex);
-        return;
+        goto _;
     }
 
     DWORD count = {};
     HANDLE process = {};
     WTS_PROCESS_INFOW *items = {};
 
-    if (WTSEnumerateProcessesW(WTS_CURRENT_SERVER, 0, 1, &items, &count))
+    /*
+        - Try and look for an existing instance of the game.
+        - We only enumerate processes launched by the current user.
+    */
+
+    if (WTSEnumerateProcessesExW(WTS_CURRENT_SERVER, &(DWORD){}, WTS_CURRENT_SESSION, (PWSTR *)&items, &count))
     {
         for (DWORD index = {}; index < count; index++)
         {
@@ -44,8 +70,13 @@ __declspec(dllexport) VOID GameLaunch(VOID)
 
             CloseHandle(process);
         }
-        WTSFreeMemory(items);
+        WTSFreeMemoryExW(WTSTypeProcessInfoLevel0, items, count);
     }
+
+    /*
+        - If we found an existing instance of the game, wait for it to initialize.
+        - If initialization fails, assume the game didn't start & launch it.
+    */
 
     if (WaitForInputIdle(process, INFINITE))
     {
@@ -60,6 +91,11 @@ __declspec(dllexport) VOID GameLaunch(VOID)
         CloseHandle(info.hProcess);
     }
     CloseHandle(process);
+
+    /*
+        - Push the game's window into the foreground if possible.
+        - Using "FindWindowEx" to enumerate windows is objectively faster than "EnumWindows".
+    */
 
     HWND wnd = {};
     while ((wnd = FindWindowExW(NULL, wnd, L"Bedrock", NULL)))
@@ -78,11 +114,16 @@ __declspec(dllexport) VOID GameLaunch(VOID)
     }
 
     CloseHandle(mutex);
+_:
+    return TerminateProcess(GetCurrentProcess(), 0);
 }
 
 BOOL DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
+    {
         DisableThreadLibraryCalls(instance);
+        QueueUserWorkItem(ThreadProc, NULL, WT_EXECUTEDEFAULT);
+    }
     return TRUE;
 }
